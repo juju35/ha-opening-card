@@ -1,6 +1,6 @@
 {
   "name": "ha-opening-card",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Lovelace cards for Home Assistant's doors, windows and electrical panel: animated picture, lock, window handle, doorbell, open-too-long alert and today's timeline.",
   "repository": {
     "type": "git",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3 - 2026-11-22
+
+### Fixes
+- Opening Card and Opening Mini Card: the `name` option is now used in the header title and the unlock/open confirmations (the entity's own name was always shown).
+
 ## 1.0.2 - 2026-11-22
 
 ### Performance
