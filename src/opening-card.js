@@ -4075,7 +4075,7 @@ for (const card of [
   { type: "opening-journal-card", name: "Opening Journal Card", description: "Today's timeline of every door and window, longest and last opening." },
 ]) {
   if (!window.customCards.some((c) => c.type === card.type))
-    window.customCards.push({ ...card, preview: true, documentationURL: "https://github.com/juju35/ha-opening-card" });
+    window.customCards.push({ ...card, preview: false, documentationURL: "https://github.com/juju35/ha-opening-card" });
 }
 
 console.info(
