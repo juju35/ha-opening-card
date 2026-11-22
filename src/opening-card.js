@@ -3582,7 +3582,8 @@ class OpeningCard extends OpeningBase {
   }
 
   _entries() {
-    return this._config.entity ? [this._config.entity] : [];
+    const { entity, name } = this._config;
+    return entity ? [{ entity, name }] : [];
   }
 
   _zoom() {

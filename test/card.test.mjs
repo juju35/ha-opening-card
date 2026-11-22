@@ -159,6 +159,18 @@ test("full card: banner, alert, tiles, lock buttons and today's timeline", async
   assert.deepEqual(plain(h.ws[0].entity_ids), ["binary_sensor.patio_door", "lock.patio_door"]);
 });
 
+test("the name option replaces the entity's name in the title, the mini card and the confirmations", () => {
+  const h = makeHass();
+  for (const Card of [oc.OpeningCard, oc.OpeningMiniCard]) {
+    const card = newCard(Card, { entity: "binary_sensor.front_door", name: "Main entrance" }, h);
+    assert.match(html(card), /<span class="name">Main entrance<\/span>/);
+    assert.doesNotMatch(html(card), /<span class="name">Front door<\/span>/);
+  }
+  const card = newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.front_door", name: "Main entrance" }, h);
+  click(card, { action: "unlock" });
+  assert.match(card.shadowRoot.innerHTML, /Unlock Main entrance\?/);
+});
+
 test("unlocking asks first, then calls lock.unlock; locking does not ask", () => {
   const h = makeHass();
   const card = newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.front_door" }, h);
