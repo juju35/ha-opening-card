@@ -35,12 +35,12 @@ The cards read standard entities only (`binary_sensor` of the `door`, `window`, 
 - Four cards: a full **Opening Card** (`custom:opening-card`), its **Opening Mini Card** (`custom:opening-mini-card`), an **Opening Overview Card** (`custom:opening-overview-card`) and an **Opening Journal Card** (`custom:opening-journal-card`)
 - **14 kinds of openings drawn**: front door, interior door, French door (one or two leaves), sliding patio door, wicket gate, pet flap, trapdoor, window (one or two sashes), tilt-and-turn window, sliding window, hopper window and electrical panel — plus garage doors and gates, shown read only
 - The kind of opening is **found on its own** from the device class and the name (*Front door*, *Porte-fenêtre*, *Baie vitrée*, *Chatière*, *Oscillo-battant*, *Soufflet*, *Tableau électrique*, *Kippfenster*, *Balkontür*…), and forced with `opening_type`
-- The picture **opens with the contact**: the leaf swings on its hinges, the patio door slides, the sash tilts, the flap swings; while open it stirs gently in the draught, and the room behind lights up warm. Night picture with a dark Home Assistant theme
-- **Lock**: its state on a tile and its buttons — *Lock*, *Unlock* and *Open* (unlatch, for the locks that support it), unlocking and opening asking first in a popup at the top of the card. The lock of the sensor's own device is used when none is set
+- The picture **opens with the contact**, animated as it happens: the leaf swings on its hinges, the patio door slides, the sash tilts, the flap swings; while open it stirs gently in the draught, and the room behind lights up warm. Night picture with a dark Home Assistant theme
+- **Lock**: its state on a tile, how long it has been locked or unlocked, and its buttons — *Lock*, *Unlock* and *Open* (unlatch, for the locks that support it), unlocking and opening asking first in a popup at the top of the card; no *Lock* nor *Open* while the door stands open. The lock of the sensor's own device is used when none is set
 - **Window handle** (a sensor reporting open / tilted / closed): a tilted window is drawn tilted and said *Tilted*
 - **Open-too-long alert**: an opening open longer than `open_alert` minutes (10 by default) turns red, its icon pulses and a line says for how long
 - **Today's timeline**: every opening of the day on a 24-hour bar (the unlocked time in amber), with their number and total open time, read from Home Assistant's history
-- Tiles for the **doorbell** (time of the last ring, from an `event` or a `binary_sensor`), the **battery** (the sensor's own device's, found on its own), the **heating** (*Paused* while the window is open), the **pet** (inside or outside, for a pet flap), the **breakers** and the **power** of an electrical panel (a tripped breaker lights red in the picture)
+- Tiles for the **doorbell** (time of the last ring, from an `event` or a `binary_sensor`), the **battery** (the sensor's own device's, found on its own), the **heating** (*Paused* when it went off after the window opened), the **pet** (inside or outside, for a pet flap), the **breakers** and the **power** of an electrical panel (a tripped breaker lights red in the picture; one offline is not counted as tripped)
 - **Illustrated header** (90 px, all cards): the opening drawn on a facade, standing on a pavement strip, the round icon and the status pill in the state color — green closed or locked, amber unlocked, blue open, red alert or unavailable
 - **Mini card**: the illustrated header alone, with a detail button at the top right that unfolds the full card; a click elsewhere folds it back
 - **Overview**: every door and window (all the door, window and opening sensors when no list is given, garage doors and gates read only), alerts first, with **filters** (All, Open, Unlocked, Alerts) and a **Journal** tab
@@ -183,9 +183,9 @@ open_alert: 15
 | `handle` | all | — | A window handle sensor (open / tilted / closed): a tilted window is drawn and said tilted |
 | `doorbell` | card, mini | — | An `event` or `binary_sensor` doorbell: the time of its last ring |
 | `battery` | all | The battery of the sensor's own device | A battery sensor (%): red under 20 %, amber under 35 %; `false` hides it |
-| `climate` | card, mini | — | The heating of the room: *Paused* (amber) while it is off with the window open |
+| `climate` | card, mini | — | The heating of the room: *Paused* (amber) when it went off after the window opened, else *Off* or *On* with its target |
 | `power` | card, mini | — | A power sensor, for an electrical panel (W shown in kW from 1000 W) |
-| `breakers` | card, mini | — | **YAML only.** The breakers of an electrical panel (`switch` or `binary_sensor`, on = on): how many are on, and a tripped one lights red in the picture |
+| `breakers` | card, mini | — | **YAML only.** The breakers of an electrical panel (`switch` or `binary_sensor`, on = on): how many are on (among those reporting), and a tripped one (off) lights red in the picture; an unavailable one is not counted |
 | `pet` | card, mini | — | A pet presence (`binary_sensor` on = inside, or `device_tracker`), for a pet flap |
 | `open_alert` | all | `10` | Minutes after which an open opening turns into an alert (red, pulsing icon, alert line); `0` turns the alert off |
 | `show_history` | card, mini | `true` | Today's timeline (number of openings, total open time, 24-hour bar) |

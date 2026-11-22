@@ -75,6 +75,19 @@ test("status: an opening open longer than its alert limit is an alert; closed an
   assert.equal(oc.statusOf(it("unavailable", 0), now).cls, "crit");
 });
 
+test("locked and unlocked count from the lock's last change, not the contact's", () => {
+  const now = Date.now();
+  const at = (min) => new Date(now - min * 60000).toISOString();
+  const st = oc.statusOf({ pos: "closed", since: at(240), alertMin: 10, lockState: "locked", lockSince: at(2) }, now);
+  assert.equal(st.key, "s_locked");
+  assert.equal(Math.round(st.min), 2);
+  assert.equal(Math.round(oc.statusOf({ pos: "closed", since: at(240), alertMin: 10, lockState: null }, now).min), 240);
+  const h = makeHass();
+  h.states["lock.front_door"] = { ...h.states["lock.front_door"], last_changed: at(2) };
+  h.states["binary_sensor.front_door"] = { ...h.states["binary_sensor.front_door"], last_changed: at(240) };
+  assert.match(html(newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.front_door" }, h)), /Locked for 2 min/);
+});
+
 test("a window handle reporting tilted turns an open window into a tilted one", () => {
   const h = makeHass();
   const it = oc.itemOf(h, { entity: "binary_sensor.bedroom_window", handle: "sensor.bedroom_window_handle" });
@@ -93,6 +106,13 @@ test("the battery and the lock of the sensor's own device are found unless turne
   } finally {
     delete h.entities["lock.front_door"];
   }
+});
+
+test("a battery sensor whose state comes in after the registry was indexed is still found", () => {
+  const h = makeHass({ "sensor.front_door_battery": null });
+  assert.equal(oc.relatedOf(h, "binary_sensor.front_door", "battery"), null);
+  h.states["sensor.front_door_battery"] = { entity_id: "sensor.front_door_battery", state: "80", attributes: { device_class: "battery" } };
+  assert.equal(oc.relatedOf(h, "binary_sensor.front_door", "battery"), "sensor.front_door_battery");
 });
 
 test("today's spans and openings, from compressed history rows and the current state", () => {
@@ -129,8 +149,9 @@ test("full card: banner, alert, tiles, lock buttons and today's timeline", async
   assert.match(out, /class="badge crit"/);
   assert.match(out, /Open for 14 min, over the 10 min limit/);
   assert.match(out, /Contact[\s\S]*Lock[\s\S]*Unlocked[\s\S]*Battery[\s\S]*18 %/);
-  assert.match(out, /data-action="lock"/);
-  assert.doesNotMatch(out, /data-action="unlatch"/);
+  // Open: no Lock button (see below), the History one stays.
+  assert.doesNotMatch(out, /data-action="lock"/);
+  assert.match(out, /data-action="history"/);
   // The mock history depends on the time of day: some openings, and their total.
   assert.match(out, /(\d+ openings|1 opening) · [\d a-z]+ in total/);
   assert.equal(h.ws.length, 1);
@@ -147,12 +168,37 @@ test("unlocking asks first, then calls lock.unlock; locking does not ask", () =>
   assert.equal(h.calls.length, 0);
   click(card, { action: "confirm_ok" });
   assert.deepEqual(plain(h.calls), [["lock", "unlock", { entity_id: "lock.front_door" }]]);
-  const open = newCard(oc.OpeningCard, { entity: "binary_sensor.patio_door", lock: "lock.patio_door" }, h);
-  click(open, { action: "lock" });
+  const closed = newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.patio_door" }, h);
+  click(closed, { action: "lock" });
   assert.deepEqual(plain(h.calls.at(-1)), ["lock", "lock", { entity_id: "lock.patio_door" }]);
   const noAsk = newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.front_door", confirm: false }, h);
   click(noAsk, { action: "unlatch" });
   assert.deepEqual(plain(h.calls.at(-1)), ["lock", "open", { entity_id: "lock.front_door" }]);
+});
+
+test("no Lock nor Open button while the door stands open; Unlock stays", () => {
+  const open = html(newCard(oc.OpeningCard, { entity: "binary_sensor.patio_door", lock: "lock.patio_door" }, makeHass()));
+  assert.doesNotMatch(open, /data-action="lock"/);
+  const lockedOpen = html(newCard(oc.OpeningCard, { entity: "binary_sensor.office_door", lock: "lock.front_door" }, makeHass()));
+  assert.match(lockedOpen, /data-action="unlock"/);
+  assert.doesNotMatch(lockedOpen, /data-action="unlatch"/);
+  const closed = html(newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", lock: "lock.patio_door" }, makeHass()));
+  assert.match(closed, /data-action="lock"/);
+});
+
+test("history is asked again after a state change at most once a minute", async () => {
+  const h = makeHass({}, { history: true });
+  const card = newCard(oc.OpeningCard, { entity: "binary_sensor.front_door" }, h);
+  await tick();
+  await tick();
+  assert.equal(h.ws.length, 1);
+  card.hass = { ...h, states: { ...h.states, "binary_sensor.front_door": { ...h.states["binary_sensor.front_door"], state: "on", last_changed: new Date().toISOString() } } };
+  await tick();
+  assert.equal(h.ws.length, 1);
+  card._hist.at -= 61000;
+  card._update();
+  await tick();
+  assert.equal(h.ws.length, 2);
 });
 
 test("a tile opens the more-info dialog of its entity", () => {
@@ -167,11 +213,20 @@ test("panel, pet, heating and doorbell tiles", () => {
   const breakers = Array.from({ length: 16 }, (_, i) => `switch.breaker_${i + 1}`);
   const panel = html(newCard(oc.OpeningCard, { entity: "binary_sensor.electrical_panel", breakers, power: "sensor.house_power" }, h));
   assert.match(panel, /1 tripped/);
+  // A breaker module offline is not a tripped breaker.
+  const offline = html(newCard(oc.OpeningCard, { entity: "binary_sensor.electrical_panel", breakers }, makeHass({ "switch.breaker_12": "unavailable" })));
+  assert.match(offline, /15\/15 on/);
+  assert.doesNotMatch(offline, /tripped/);
   assert.match(panel, /2\.4 kW/);
   assert.match(panel, /class="op op-electrical_panel closed tripped"/);
   const win = html(newCard(oc.OpeningCard, { entity: "binary_sensor.bedroom_window", handle: "sensor.bedroom_window_handle", climate: "climate.bedroom" }, h));
   assert.match(win, /Handle[\s\S]*Tilted/);
   assert.match(win, /Heating[\s\S]*Paused/);
+  // Off long before the window opened (off for the season): plain Off, not Paused.
+  const season = makeHass();
+  season.states["climate.bedroom"] = { ...season.states["climate.bedroom"], last_changed: new Date(Date.now() - 86400000).toISOString() };
+  const off = html(newCard(oc.OpeningCard, { entity: "binary_sensor.bedroom_window", handle: "sensor.bedroom_window_handle", climate: "climate.bedroom" }, season));
+  assert.match(off, /Heating[\s\S]*>Off</);
   const pet = html(newCard(oc.OpeningCard, { entity: "binary_sensor.cat_flap", pet: "binary_sensor.cat_presence" }, h));
   assert.match(pet, /Outside · /);
   const bell = html(newCard(oc.OpeningCard, { entity: "binary_sensor.front_door", doorbell: "event.front_doorbell" }, h));
@@ -188,7 +243,7 @@ test("translated card", () => {
   const out = html(newCard(oc.OpeningCard, { entity: "binary_sensor.patio_door", lock: "lock.patio_door" }, makeHass({}, { language: "fr" })));
   assert.match(out, /Ouvert depuis 14 min/);
   assert.match(out, /Déverrouillé/);
-  assert.match(out, /Verrouiller/);
+  assert.match(out, /Historique/);
 });
 
 test("mini card: the banner alone, unfolding with its detail button, folding back on a click elsewhere", () => {

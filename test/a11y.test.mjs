@@ -18,7 +18,7 @@ test("every clickable element is a button or has the button role and a tab stop"
     assert.ok(tags.length > 0);
     for (const tag of tags) {
       if (tag.startsWith("<button")) continue;
-      if (tag.startsWith('<div class="backdrop"') || tag.startsWith('<div class="bscene')) continue;
+      if (tag.startsWith('<div class="backdrop"')) continue;
       assert.match(tag, /\brole="button"/, tag);
       assert.match(tag, /\btabindex="0"/, tag);
     }

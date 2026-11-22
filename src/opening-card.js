@@ -2673,23 +2673,26 @@ const minutesSince = (iso, now) => {
 };
 
 // Entities of the sensor's own device that the card uses on their own: its battery and its lock (a smart lock's
-// door sensor, a window with a locking handle). Found in the entity registry, cached per registry.
+// door sensor, a window with a locking handle). The registry is indexed once per registry object; whether a sensor
+// is a battery is read from its current state at each lookup, so a sensor whose state comes in late is still found.
 const _related = new WeakMap();
 const relatedOf = (hass, id, kind) => {
   const reg = hass?.entities;
   if (!reg) return null;
   let map = _related.get(reg);
   if (!map) {
-    map = { battery: {}, lock: {} };
+    map = { sensors: {}, lock: {} };
     for (const e of Object.values(reg)) {
-      if (!e.device_id || !hass.states[e.entity_id]) continue;
-      if (e.entity_id.startsWith("sensor.") && hass.states[e.entity_id].attributes?.device_class === "battery") map.battery[e.device_id] ??= e.entity_id;
+      if (!e.device_id) continue;
+      if (e.entity_id.startsWith("sensor.")) (map.sensors[e.device_id] ||= []).push(e.entity_id);
       if (e.entity_id.startsWith("lock.")) map.lock[e.device_id] ??= e.entity_id;
     }
     _related.set(reg, map);
   }
   const dev = reg[id]?.device_id;
-  return (dev && map[kind][dev]) || null;
+  if (!dev) return null;
+  if (kind === "lock") return map.lock[dev] || null;
+  return (map.sensors[dev] || []).find((s) => hass.states[s]?.attributes?.device_class === "battery") || null;
 };
 
 const OPTION_KEYS = ["lock", "doorbell", "battery", "handle", "climate", "power", "pet", "breakers", "open_alert"];
@@ -2719,6 +2722,7 @@ const itemOf = (hass, entry, card = {}) => {
     lock: lockId,
     ls,
     lockState: lockOf(ls),
+    lockSince: ls?.last_changed,
     handle: o.handle || null,
     doorbell: o.doorbell || null,
     battery: own("battery"),
@@ -2741,8 +2745,11 @@ const statusOf = (it, now = Date.now()) => {
     return { cls: alert ? "crit" : "active", key: it.pos === "tilt" ? "s_tilted" : "s_open", alert, min };
   }
   if (it.pos === "closed") {
-    if (it.lockState === "unlocked") return { cls: "warn", key: "s_unlocked", min };
-    return { cls: "ok", key: it.lockState === "locked" ? "s_locked" : "s_closed", min };
+    // Locked or unlocked: since the lock changed, not the contact (a door closed at 8:00 and locked at 11:58).
+    const lmin = it.lockSince ? minutesSince(it.lockSince, now) : min;
+    if (it.lockState === "unlocked") return { cls: "warn", key: "s_unlocked", min: lmin };
+    if (it.lockState === "locked") return { cls: "ok", key: "s_locked", min: lmin };
+    return { cls: "ok", key: "s_closed", min };
   }
   return { cls: "idle", key: "s_unknown", min: 0 };
 };
@@ -2920,9 +2927,10 @@ const SCENE_STYLE = `
   .op.open .sx { transform: scaleX(var(--s)); } .op.open .sy { transform: scaleY(var(--s)); } .op.open .tx { transform: translateX(var(--d)); }
   .op.tilt .tl { transform: scaleY(.8); }
   .op .hd { --o: 73px 40px; } .op.open .hd { transform: rotate(90deg); } .op.tilt .hd { transform: rotate(180deg); }
-  /* An open leaf stirs in the draught; a tilted sash and a pet flap too. A garage door stays still. */
-  .op.sway .sx:not(.lift), .op.sway .sw { animation: op-sway 3.2s ease-in-out infinite alternate; }
-  .op.tilt .tl { animation: op-tilt 3.2s ease-in-out infinite alternate; }
+  /* An open leaf stirs in the draught; a tilted sash and a pet flap too. A garage door stays still. The stirring
+     starts once the opening transition is over (.7 s), so that the leaf is first seen swinging open. */
+  .op.sway .sx:not(.lift), .op.sway .sw { animation: op-sway 3.2s ease-in-out .7s infinite alternate; }
+  .op.tilt .tl { animation: op-tilt 3.2s ease-in-out .7s infinite alternate; }
   .op.sway .sy.sw { animation-name: op-flap; animation-duration: 1.6s; }
   @keyframes op-sway { from { transform: scaleX(var(--s)); } to { transform: scaleX(calc(var(--s) + .07)); } }
   @keyframes op-flap { from { transform: scaleY(var(--s)); } to { transform: scaleY(calc(var(--s) + .5)); } }
@@ -3122,14 +3130,69 @@ const watchOutside = (isOut, handler) => {
   };
 };
 
+// The card is updated in place, not rewritten: the same elements stay, only what changed is patched. A picture
+// keeps its <svg>, so its leaf swings open with the CSS transition when its class turns to "open"; the keyboard
+// focus stays on its element; running animations (a leaf stirring, the alert ring) are not restarted.
+const morphAttrs = (cur, next) => {
+  for (const a of [...cur.attributes]) if (!next.hasAttribute(a.name)) cur.removeAttribute(a.name);
+  for (const a of [...next.attributes]) if (cur.getAttribute(a.name) !== a.value) cur.setAttribute(a.name, a.value);
+};
+// Children are matched by their entity (data-entity) when they have one, by position otherwise: a tile that moves
+// in the overview (an opening turning into an alert goes first) keeps its element, its picture and its focus.
+const keyOf = (n) => (n.nodeType === 1 ? n.getAttribute("data-entity") : null);
+const morphChildren = (cur, next) => {
+  const keyed = new Map();
+  for (const c of cur.childNodes) {
+    const k = keyOf(c);
+    if (k && !keyed.has(k)) keyed.set(k, c);
+  }
+  const after = [...next.childNodes];
+  after.forEach((n, i) => {
+    const ref = cur.childNodes[i] || null;
+    const k = keyOf(n);
+    const c = k ? keyed.get(k) : ref && !keyOf(ref) ? ref : null;
+    if (k) keyed.delete(k);
+    if (!c || c.nodeType !== n.nodeType || c.nodeName !== n.nodeName) {
+      cur.insertBefore(n, ref);
+      return;
+    }
+    if (c !== ref) cur.insertBefore(c, ref);
+    if (n.nodeType === 1) {
+      morphAttrs(c, n);
+      morphChildren(c, n);
+    } else if (c.nodeValue !== n.nodeValue) c.nodeValue = n.nodeValue;
+  });
+  while (cur.childNodes.length > after.length) cur.removeChild(cur.lastChild);
+};
+// What identifies a clickable element across renders.
+const focusSpot = (el) => {
+  const d = el?.dataset;
+  if (!d) return null;
+  // Its kind (first class: tile, door, row…, not the state ones), entity, action and value.
+  const kind = String(el.className?.baseVal ?? el.className ?? "").split(" ")[0];
+  return d.entity || d.action ? `${kind}|${d.entity || ""}|${d.action || ""}|${d.value || ""}` : null;
+};
+
+// Patches `root` to `html`; false when it cannot (first render, or no DOM template, as in the tests).
+const morph = (root, html) => {
+  if (!root.firstChild || typeof document === "undefined") return false;
+  const tpl = document.createElement("template");
+  if (!tpl.content) return false;
+  tpl.innerHTML = html;
+  morphChildren(root, tpl.content);
+  return true;
+};
+
 const isNight = (hass, config) => {
   if (config?.illustration_theme === "night") return true;
   if (config?.illustration_theme === "day") return false;
   return Boolean(hass?.themes?.darkMode);
 };
 
-// How long a history fetch is kept before it is asked again (a state change asks again at once).
+// How long a history fetch is kept before it is asked again. A state change asks again too, at most once a minute:
+// the current states are added to the fetched history meanwhile, so the bars stay up to date between fetches.
 const HISTORY_TTL = 5 * 60000;
+const HISTORY_MIN_MS = 60000;
 // While something is open (its "open for" and alert), and for the timeline's "now", the card redraws this often.
 const TICK_MS = 30000;
 // After the popup closes, clicks are ignored for this long (the second click of a double click on OK).
@@ -3268,8 +3331,17 @@ class OpeningBase extends HTMLElement {
     if (this._confirm) html = html.replace(/<ha-card([^>]*)>([\s\S]*)<\/ha-card>\s*$/, (_, a, inner) => `<ha-card${a} data-dialog>${inner}${this._confirmHtml()}</ha-card>`);
     if (html === this._html) return;
     this._html = html;
-    this.shadowRoot.innerHTML = html;
-    if (this._confirm) this.shadowRoot.querySelector(".modal .primary")?.focus?.({ preventScroll: true });
+    // The focused element is found again by what identifies it (a tile that moved in the overview loses the focus
+    // when it is moved), and focused again.
+    const spot = focusSpot(this.shadowRoot.activeElement);
+    if (!morph(this.shadowRoot, html)) this.shadowRoot.innerHTML = html;
+    if (spot && focusSpot(this.shadowRoot.activeElement) !== spot) {
+      [...this.shadowRoot.querySelectorAll("[data-entity], [data-action]")].find((el) => focusSpot(el) === spot)?.focus({ preventScroll: true });
+    }
+    // The popup's main button takes the focus once, when the popup opens.
+    const opened = this._confirm && !this._confirmShown;
+    this._confirmShown = Boolean(this._confirm);
+    if (opened) this.shadowRoot.querySelector(".modal .primary")?.focus?.({ preventScroll: true });
   }
 
   // Today's history of the given entities, fetched once and again after a state change or five minutes. Null until
@@ -3281,7 +3353,8 @@ class OpeningBase extends HTMLElement {
     const key = `${ids.join(",")}|${start}`;
     const stamp = ids.map((id) => h.states[id]?.last_changed).join("|");
     const c = this._hist;
-    const fresh = c && c.key === key && c.stamp === stamp && Date.now() - c.at < HISTORY_TTL;
+    const age = c ? Date.now() - c.at : Number.POSITIVE_INFINITY;
+    const fresh = c && c.key === key && (age < HISTORY_MIN_MS || (c.stamp === stamp && age < HISTORY_TTL));
     if (!fresh && !this._histPending) {
       this._histPending = true;
       const at = Date.now();
@@ -3321,7 +3394,7 @@ class OpeningBase extends HTMLElement {
   _banner({ title, sub, cls, icon, pill, scenes = "", zoom = "", entity }) {
     const night = isNight(this._hass, this._config) ? " night" : "";
     const show = this._config.show_title !== false;
-    const target = entity ? ` data-entity="${esc(entity)}"` : "";
+    const target = entity ? ` data-entity="${esc(entity)}" role="button" tabindex="0" aria-label="${esc(title)}"` : "";
     return `<div class="banner${night}${zoom ? " zoomable" : ""}">
       <div class="siding"></div><div class="ground"></div>
       <div class="htext">
@@ -3344,8 +3417,13 @@ class OpeningBase extends HTMLElement {
     return `<div class="thumb ${cls}">${openingSvg(it.type, it.pos, { tripped: this._tripped(it) > 0, crop: true })}</div>`;
   }
 
+  // Breakers reporting off; one unavailable or unknown (a module offline) is not counted as tripped.
   _tripped(it) {
-    return it.breakers.filter((id) => this._hass.states[id] && !["on", "home"].includes(this._hass.states[id].state)).length;
+    return it.breakers.filter((id) => this._hass.states[id]?.state === "off").length;
+  }
+
+  _breakersKnown(it) {
+    return it.breakers.filter((id) => ["on", "off"].includes(this._hass.states[id]?.state)).length;
   }
 
   _error(msg) {
@@ -3508,7 +3586,7 @@ class OpeningCard extends OpeningBase {
     const clim = it.climate && h.states[it.climate];
     if (clim) out.push(this._heating(it, clim));
     if (it.breakers.length) {
-      const n = it.breakers.filter((id) => h.states[id]).length;
+      const n = this._breakersKnown(it);
       const off = this._tripped(it);
       out.push(this._tile("k_breakers", off ? this._t("v_tripped", { n: off }) : this._t("v_armed", { on: n - off, n }), off ? "crit" : "ok", ICONS.breakers, it.breakers[0]));
     }
@@ -3532,12 +3610,14 @@ class OpeningCard extends OpeningBase {
     return new Intl.DateTimeFormat(this._locale(), { day: "numeric", month: "short" }).format(new Date(at));
   }
 
-  // Heating: paused (amber) when it is off while the window is open, else off or on with its target.
+  // Heating: paused (amber) when it went off after the window opened (a minute's leeway for the automation), else
+  // off (turned off for the season, say) or on with its target.
   _heating(it, s) {
     const off = s.state === "off";
+    const paused = off && isAjar(it.pos) && Date.parse(s.last_changed) >= Date.parse(it.since) - 60000;
     const target = Number(s.attributes?.temperature);
-    const value = off ? this._t(isAjar(it.pos) ? "v_paused" : "v_off") : Number.isFinite(target) ? `${this._t("v_on")} · ${target} °` : this._t("v_on");
-    return this._tile("k_heating", value, off ? (isAjar(it.pos) ? "warn" : "idle") : "ok", ICONS.heating, it.climate);
+    const value = paused ? this._t("v_paused") : off ? this._t("v_off") : Number.isFinite(target) ? `${this._t("v_on")} · ${target} °` : this._t("v_on");
+    return this._tile("k_heating", value, paused ? "warn" : off ? "idle" : "ok", ICONS.heating, it.climate);
   }
 
   _power(s) {
@@ -3571,8 +3651,10 @@ class OpeningCard extends OpeningBase {
     const out = [];
     if (it.ls && !it.readOnly && it.lockState !== "unavailable") {
       const locked = it.lockState === "locked";
-      out.push(this._button(locked ? "unlock" : "lock", locked ? ICONS.unlock : ICONS.lock, locked ? "unlock" : "lock"));
-      if (canUnlatch(it.ls)) out.push(this._button("unlatch", ICONS.door_open, "unlatch"));
+      // No Lock button while the door stands open: the bolt would be thrown into the void.
+      if (locked) out.push(this._button("unlock", ICONS.unlock, "unlock"));
+      else if (!isAjar(it.pos)) out.push(this._button("lock", ICONS.lock, "lock"));
+      if (canUnlatch(it.ls) && !isAjar(it.pos)) out.push(this._button("unlatch", ICONS.door_open, "unlatch"));
     }
     out.push(this._button("history", ICONS.history, "history"));
     return `<div class="actions">${out.join("")}</div>`;
