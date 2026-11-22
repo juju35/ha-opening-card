@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { historyAt } from "../scripts/mock-states.mjs";
 import { click, html, load, makeHass, newCard, plain, tick } from "./load.mjs";
 
 const oc = load();
@@ -308,7 +309,9 @@ test("overview with its own list keeps the lock of each opening; journal card", 
   const journal = newCard(oc.OpeningJournalCard, { entities: ["binary_sensor.front_door"] }, h);
   await tick();
   await tick();
-  assert.match(html(journal), /Front door[\s\S]*5×/);
+  // The mock history depends on the time of day: count the openings already over by now.
+  const count = historyAt(Date.now(), ["binary_sensor.front_door"])["binary_sensor.front_door"].filter((r) => r.s === "on").length;
+  assert.match(html(journal), new RegExp(`Front door[\\s\\S]*· ${count}×`));
 });
 
 test("editors: form data and config, defaults left out of the YAML", () => {
