@@ -4,7 +4,7 @@
 
 export const BASE_STYLE = `
   :host { --oc-ok: var(--success-color, #43a047); --oc-warn: var(--warning-color, #ffa600); --oc-crit: var(--error-color, #db4437);
-          --oc-idle: var(--disabled-text-color, #9e9e9e); --oc-active: var(--info-color, #039be5); --oc-accent: #9a6a3a;
+          --oc-idle: var(--secondary-text-color, #9e9e9e); --oc-active: var(--info-color, #039be5); --oc-accent: #9a6a3a;
           display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; --oc-natural-width: 360px; }
   /* The card is the container of its width queries: a zero-height row keeps a preferred width in a parent sized by
      its content (layout-card, an auto grid column). */
@@ -92,7 +92,7 @@ export const BODY_STYLE = `
                background: color-mix(in srgb, var(--oc-crit) 12%, transparent); color: var(--ink); }
   .alertline .icon { color: var(--oc-crit); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
-  .tile { position: relative; min-width: 0; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  .tile { position: relative; min-width: 0; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
           background: var(--secondary-background-color, rgba(127,127,127,.08)); }
   .tile .dot { position: absolute; top: 10px; right: 10px; }
   .tile .ti { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); }
